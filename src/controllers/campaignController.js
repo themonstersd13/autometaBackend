@@ -4,12 +4,28 @@ import User from '../models/User.js';
 import { emailQueue } from '../workers/email.worker.js';
 
 export const startCampaign = async (req, res) => {
-  const { subject, body, recipients } = req.body;
+  const { 
+    subject, 
+    body, 
+    recipients, 
+    emailType, 
+    templateId, 
+    preHeader, 
+    footerText, 
+    templateCustomization 
+  } = req.body;
   const userId = req.user.id;
 
-  if (!subject || !body || !recipients || recipients.length === 0) {
-    return res.status(400).json({ msg: 'Subject, body, and at least one recipient are required.' });
+  if (!subject || !recipients || recipients.length === 0) {
+    return res.status(400).json({ msg: 'Subject and at least one recipient are required.' });
   }
+  if (emailType === 'plaintext' && !body) {
+    return res.status(400).json({ msg: 'Body is required for plain text emails.' });
+  }
+  if (emailType === 'template' && !templateId) {
+    return res.status(400).json({ msg: 'Template ID is required for template emails.' });
+  }
+
 
   try {
     const user = await User.findById(userId);
@@ -19,46 +35,43 @@ export const startCampaign = async (req, res) => {
 
     // 1. Create and save the campaign
     const newCampaign = new Campaign({
-      name: subject, // Use subject as the campaign name
+      name: subject,
       subject,
       body,
-      userId: userId,
+      userId,
+      emailType,
+      templateId,
+      preHeader,
+      footerText,
+      templateCustomization,
     });
     await newCampaign.save();
 
     // 2. Create recipient records and add jobs to the queue
     for (const recipientData of recipients) {
-      // Handle case-insensitivity for the email field
       const recipientEmail = recipientData.email || recipientData.Email;
 
-      // Ensure recipientData has at least an email
       if (!recipientEmail) {
         console.warn('Skipping recipient with no email:', recipientData);
         continue;
       }
 
-      // Normalize the recipient data to ensure 'email' is lowercase
       const normalizedRecipientData = {
         ...recipientData,
         email: recipientEmail,
       };
-      // Remove the capitalized 'Email' if it exists to avoid confusion
       delete normalizedRecipientData.Email;
-
 
       const newRecipient = new Recipient({
         ...normalizedRecipientData,
-        campaignId: newCampaign._id, // Corrected from 'campaign' to 'campaignId'
+        campaignId: newCampaign._id,
         status: 'queued',
       });
       await newRecipient.save();
 
       // Add a job to the queue for this recipient
       await emailQueue.add('send-email', {
-        campaign: {
-          subject: newCampaign.subject,
-          body: newCampaign.body,
-        },
+        campaign: newCampaign.toObject(), // Pass the full campaign object
         recipient: {
           _id: newRecipient._id,
           ...normalizedRecipientData,
@@ -66,7 +79,7 @@ export const startCampaign = async (req, res) => {
         user: {
           _id: user._id,
           senderEmail: user.senderEmail,
-          appPassword: user.appPassword, // The worker will decrypt this
+          appPassword: user.appPassword,
         },
       });
     }
