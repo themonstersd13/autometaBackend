@@ -8,9 +8,23 @@ import userRoutes from './routes/user.js';
 
 const app = express();
 
-// CORS - use environment variable
+const normalizeOrigin = (value = '') => value.trim().replace(/\/$/, '');
+
+const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
+  .split(',')
+  .map(origin => normalizeOrigin(origin))
+  .filter(Boolean);
+
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    const requestOrigin = normalizeOrigin(origin || '');
+
+    if (!requestOrigin || allowedOrigins.includes(requestOrigin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS origin not allowed: ${origin}`));
+  },
   credentials: true,
 }));
 
